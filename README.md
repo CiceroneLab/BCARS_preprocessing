@@ -42,6 +42,15 @@ python GT_descan_BCARS_preprocessing.py <input> <output> [--mode {ratio,raw,vst}
 |----------|---------|-------------|
 | `--mode` | `ratio` | Output mode (**mutually exclusive**): `ratio` = BCARS/NRB intensity ratio; `raw` = dark-subtracted / illumination-corrected spectra; `vst` = variance-stabilized dispersive-like spectrum `(I − A_nrb²)/(2·A_nrb)` (saved as float32). |
 | `--med_filter 1` | `1` | Apply 3D median filter before intensity correction. Set to `1` or ignore this cmd for crikit pipeline. Set to `0` to skip for N2N pipeline |
+| `--align` | `0` | Apply the per-line spectral alignment roll (`1` = yes, `0` = no). The measured per-line shift is saved either way as `<prefix>_line_shift_px`; `--align 1` reproduces tag `v1.0-prealign` bit-for-bit. |
+
+## VST inverse
+
+`--mode vst` saves `<prefix>_vst` and the per-line amplitude `<prefix>_vst_nrb_amp`.
+`GT_descan_BCARS_tools.vst_to_ratio(vst, vst_nrb_amp)` converts back to the BCARS/NRB
+ratio (`1 + 2Z/A_nrb`), so a cube can be denoised in the variance-stabilized domain and
+then phase-retrieved with the usual Kramers-Kronig path (`nrb = 1`). Exact wherever the
+NRB exceeded `VST_EPS`.
 
 ## Examples
 
