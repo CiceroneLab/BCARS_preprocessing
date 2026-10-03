@@ -92,8 +92,15 @@ def dset_finder_descan(DATA_FOLDER, filename, overwrite_attrs = True):
 
 # For non-uniform galvo illumination
 def intensity_correction(smoothed_raw, smoothed_nrb, smoothed_dark, OUTPUT_RATIO = True, OUTPUT_VST = False,
-                         SPEC_ALIGNING_PIX = 546, VST_EPS = 1.0,
+                         SPEC_ALIGNING_PIX = 546, VST_EPS = 1.0, ALIGN = True,
                          raw_data=None, raw_nrb=None, raw_dark=None):
+    # ALIGN: apply the per-line spectral shift (np.roll by the rounded sub-pixel shift).
+    #   True  - legacy behaviour: each line is rolled onto the mid-line reference.
+    #   False - lines are left in their native frame; the shifts are still measured and
+    #           returned, so the drift can be calibrated downstream.
+    # The sub-pixel drift is smooth (~0.03 px between neighbouring lines) but rounding it
+    # to an integer groups the lines into a few blocks, and the 1-pixel steps at the block
+    # boundaries show up as column stripes after KK + phase-error correction.
     # VST (variance-stabilization) and ratio are mutually exclusive; VST takes precedence.
     if OUTPUT_VST:
         OUTPUT_RATIO = False
@@ -145,10 +152,14 @@ def intensity_correction(smoothed_raw, smoothed_nrb, smoothed_dark, OUTPUT_RATIO
         vst_shifted = None
         vst_nrb_amp = None
 
+    # measured per-line sub-pixel shift (always recorded, applied only when ALIGN)
+    line_shift_px = np.zeros(nrb_intcorrected.shape[1], dtype=np.float32)
+
     for y in np.arange(nrb_intcorrected.shape[1]):
         # shift computation always uses smoothed nrb_profile
         s_phase = phase_align(nrb_profile[y,:], nrb_profile[int(nrb_intcorrected.shape[1]//2),:], [1800,1950])
-        difference_pix = int(np.round(s_phase))
+        line_shift_px[y] = s_phase
+        difference_pix = int(np.round(s_phase)) if ALIGN else 0
         if use_raw:
             raw_bcars_shifted[:, y, :] = np.roll(raw_bcars_dark_sub[:, y, :], difference_pix, axis=1)
             raw_nrb_shifted[:, y, :]   = np.roll(raw_nrb[:, y, :].astype(np.float64), difference_pix, axis=1)
@@ -184,8 +195,26 @@ def intensity_correction(smoothed_raw, smoothed_nrb, smoothed_dark, OUTPUT_RATIO
                 vst_nrb_amp[y, :] = nrb_amp_rolled
 
     if use_raw:
-        return raw_bcars_shifted, raw_nrb_shifted, ratio_shifted, raw_dark_shifted, vst_shifted, vst_nrb_amp
-    return bcars_intcorrected_shifted, nrb_intcorrected_shifted, ratio_shifted, smoothed_dark_shifted, vst_shifted, vst_nrb_amp
+        return raw_bcars_shifted, raw_nrb_shifted, ratio_shifted, raw_dark_shifted, vst_shifted, vst_nrb_amp, line_shift_px
+    return bcars_intcorrected_shifted, nrb_intcorrected_shifted, ratio_shifted, smoothed_dark_shifted, vst_shifted, vst_nrb_amp, line_shift_px
+
+
+def vst_to_ratio(vst, vst_nrb_amp):
+    """Invert the VST back to the BCARS/NRB intensity ratio.
+
+    Z = (I - A_nrb^2) / (2 A_nrb)  ->  I / A_nrb^2 = 1 + 2 Z / A_nrb
+
+    Args:
+        vst (ndarray): (nx, ny, nspec) VST cube, dataset <prefix>_vst
+        vst_nrb_amp (ndarray): (ny, nspec) per-line A_nrb, dataset <prefix>_vst_nrb_amp
+
+    Returns:
+        ndarray: ratio cube, same shape as vst, suitable for Kramers-Kronig with nrb = 1.
+
+    Exact wherever the NRB exceeded VST_EPS; below that A_nrb was clipped and the
+    original value cannot be recovered.
+    """
+    return 1.0 + 2.0 * np.asarray(vst, dtype=np.float64) / np.asarray(vst_nrb_amp)[None, :, :]
 
 
 # Function to compute the sum along axis=3

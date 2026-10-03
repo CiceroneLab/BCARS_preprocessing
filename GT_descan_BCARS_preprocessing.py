@@ -14,12 +14,16 @@ parser.add_argument('--mode', choices=['ratio', 'raw', 'vst'], default='ratio',
                          "'raw' = dark-subtracted/illumination-corrected spectra, "
                          "'vst' = variance-stabilized dispersive-like spectrum (I - A_nrb^2)/(2*A_nrb)")
 parser.add_argument('--med_filter', type=int, default=1, help='Apply median filter (1=yes, 0=no)')
+parser.add_argument('--align', type=int, default=0,
+                    help='Apply the per-line spectral alignment roll (1=yes, 0=no, default 0). '
+                         'The measured per-line shift is saved either way as <prefix>_line_shift_px.')
 args = parser.parse_args()
 
 DATA_FOLDER = args.input
 SAVE_FOLDER = args.output
 MODE = args.mode
 APPLY_MED = bool(args.med_filter)
+APPLY_ALIGN = bool(args.align)
 
 files = os.listdir(DATA_FOLDER)
 data_list = [i for i in files if i.endswith('.h5')]
@@ -68,7 +72,7 @@ for num, filename in enumerate(data_list):
     outfile = f'preprocessed_{prefix}_{filename}'
 
     if MODE == 'ratio':
-        _, _, ratio, out_dark, _, _ = intensity_correction(data_smoothed, nrb_smoothed, dark_smoothed, OUTPUT_RATIO=True, **raw_kwargs)
+        _, _, ratio, out_dark, _, _, line_shift_px = intensity_correction(data_smoothed, nrb_smoothed, dark_smoothed, OUTPUT_RATIO=True, ALIGN=APPLY_ALIGN, **raw_kwargs)
         nrb_for_ratio = np.ones((10, nrb_smoothed.shape[2]))
         lazy5.create.save(file=outfile, pth=SAVE_FOLDER, dset=f'preprocessed_images/{prefix}_ratio', data=np.array(ratio), mode='w')
         lazy5.create.save(file=outfile, pth=SAVE_FOLDER, dset=f'preprocessed_images/{prefix}_nrb_for_ratio', data=np.array(nrb_for_ratio, dtype=np.uint16), mode='a')
@@ -78,7 +82,7 @@ for num, filename in enumerate(data_list):
         lazy5.alter.write_attr_dict(dset=f'preprocessed_images/{prefix}_dark', attr_dict=attrs, fid=os.path.join(SAVE_FOLDER, outfile))
 
     elif MODE == 'vst':
-        _, _, _, out_dark, vst, vst_nrb_amp = intensity_correction(data_smoothed, nrb_smoothed, dark_smoothed, OUTPUT_VST=True, **raw_kwargs)
+        _, _, _, out_dark, vst, vst_nrb_amp, line_shift_px = intensity_correction(data_smoothed, nrb_smoothed, dark_smoothed, OUTPUT_VST=True, ALIGN=APPLY_ALIGN, **raw_kwargs)
         nrb_ones = np.ones((10, nrb_smoothed.shape[2]))
         # VST output is signed/float -> save as float32 (never uint16)
         lazy5.create.save(file=outfile, pth=SAVE_FOLDER, dset=f'preprocessed_images/{prefix}_vst', data=np.array(vst, dtype=np.float32), mode='w')
@@ -91,7 +95,7 @@ for num, filename in enumerate(data_list):
         lazy5.alter.write_attr_dict(dset=f'preprocessed_images/{prefix}_dark', attr_dict=attrs, fid=os.path.join(SAVE_FOLDER, outfile))
 
     else:  # raw
-        data_out, nrb_out, _, out_dark, _, _ = intensity_correction(data_smoothed, nrb_smoothed, dark_smoothed, OUTPUT_RATIO=False, **raw_kwargs)
+        data_out, nrb_out, _, out_dark, _, _, line_shift_px = intensity_correction(data_smoothed, nrb_smoothed, dark_smoothed, OUTPUT_RATIO=False, ALIGN=APPLY_ALIGN, **raw_kwargs)
         lazy5.create.save(file=outfile, pth=SAVE_FOLDER, dset=f'preprocessed_images/{prefix}_raw', data=np.array(data_out, dtype=np.uint16), mode='w')
         lazy5.create.save(file=outfile, pth=SAVE_FOLDER, dset=f'preprocessed_images/{prefix}_nrb', data=np.array(nrb_out, dtype=np.uint16), mode='a')
         lazy5.create.save(file=outfile, pth=SAVE_FOLDER, dset=f'preprocessed_images/{prefix}_dark', data=np.array(out_dark, dtype=np.uint16), mode='a')
@@ -99,6 +103,12 @@ for num, filename in enumerate(data_list):
         lazy5.alter.write_attr_dict(dset=f'preprocessed_images/{prefix}_nrb', attr_dict=attrs, fid=os.path.join(SAVE_FOLDER, outfile))
         lazy5.alter.write_attr_dict(dset=f'preprocessed_images/{prefix}_dark', attr_dict=attrs, fid=os.path.join(SAVE_FOLDER, outfile))
     
+
+    # per-line spectral shift that was measured (and applied only when --align 1)
+    lazy5.create.save(file=outfile, pth=SAVE_FOLDER, dset=f'preprocessed_images/{prefix}_line_shift_px',
+                      data=np.array(line_shift_px, dtype=np.float32), mode='a')
+    lazy5.alter.write_attr_dict(dset=f'preprocessed_images/{prefix}_line_shift_px', attr_dict=attrs,
+                                fid=os.path.join(SAVE_FOLDER, outfile))
 
     end2 = time.time()
     print(f'spent {round(((end2 - start2)/60),2)} minutes for processing {filename}')
